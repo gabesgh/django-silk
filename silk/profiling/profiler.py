@@ -137,6 +137,10 @@ class silk_profile:
             def decorator(view_func):
                 @wraps(view_func)
                 def wrapped_target(*args, **kwargs):
+                    # Like the context manager, only profile during a request. Outside one
+                    # (e.g. in another thread) silk may not be set up at all (#569)
+                    if not self._should_profile():
+                        return target(*args, **kwargs)
                     with silk_meta_profiler():
                         try:
                             func_code = target.__code__

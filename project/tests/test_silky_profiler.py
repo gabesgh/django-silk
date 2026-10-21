@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 from time import sleep
 
 from django.test import TestCase
@@ -24,8 +25,18 @@ class TestProfilerRequests(TestCase):
             sleep(0.1)
 
         func()
-        profile = list(DataCollector().profiles.values())[0]
-        self.assertFalse(profile['request'])
+        self.assertFalse(DataCollector().profiles)
+
+    def test_decorator_in_thread_without_request(self):
+        """Silk was never set up in this thread, which used to raise SilkNotConfigured (#569)"""
+        DataCollector().configure()  # Set up silk in this (main) thread only
+
+        @silk_profile()
+        def func():
+            return 'result'
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            self.assertEqual(executor.submit(func).result(), 'result')
 
     def test_context_manager_request(self):
         DataCollector().configure(Request.objects.create(path='/to/somewhere'))
