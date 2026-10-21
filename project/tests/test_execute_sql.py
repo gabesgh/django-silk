@@ -32,8 +32,9 @@ def mock_sql(mock_query_params):
             spec_set=['supports_explaining_query_execution'],
             supports_explaining_query_execution=True
         ),
-        ops=NonCallableMock(spec_set=['explain_query_prefix'],
-                            explain_query_prefix=Mock(return_value='')),
+        ops=NonCallableMock(spec_set=['explain_query_prefix', 'explain_prefix'],
+                            explain_query_prefix=Mock(return_value=''),
+                            explain_prefix=None),
     )
 
     return mock_sql_query, mock_query_params
@@ -134,6 +135,27 @@ class TestCollectorInteraction(BaseTestCase):
         execute_sql(sql)
         self.assertNotIn(prefix, params)
         mock_cursor.execute.assert_called_once_with(f"{prefix} {_simple_mock_query_sql}", params)
+
+    def test_explain_query_from_queryset_explain(self):
+        """A query that is already an EXPLAIN is not prefixed again,
+        even when silk's prefix has extra options (#650)"""
+        cases = [
+            # PostgreSQL with SILKY_ANALYZE_QUERIES, QuerySet.explain()
+            ("EXPLAIN (ANALYZE true)", "EXPLAIN"),
+            # MariaDB with SILKY_ANALYZE_QUERIES, QuerySet.explain(analyze=True)
+            ("ANALYZE", "ANALYZE"),
+        ]
+        for silk_prefix, query_prefix in cases:
+            with self.subTest(silk_prefix=silk_prefix, query_prefix=query_prefix):
+                DataCollector().configure(request=Request.objects.create(path='/path/to/somewhere'))
+                sql, params = mock_sql(_simple_mock_query_params)
+                explain_query = f"{query_prefix} {_simple_mock_query_sql}"
+                sql.as_sql.return_value = (explain_query, params)
+                sql.connection.ops.explain_prefix = "EXPLAIN"
+                sql.connection.ops.explain_query_prefix.return_value = silk_prefix
+                mock_cursor = sql.connection.cursor.return_value.__enter__.return_value
+                execute_sql(sql)
+                mock_cursor.execute.assert_called_once_with(explain_query, params)
 
     def test_explain_unicode(self):
         DataCollector().configure(request=Request.objects.create(path='/path/to/somewhere'))

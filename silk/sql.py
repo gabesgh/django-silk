@@ -53,7 +53,10 @@ def _explain_query(connection, q, params):
 
         # currently we cannot use explain() method
         # for queries other than `select`
-        if q.upper().startswith(prefix.upper()):
+        # Also check the backend's plain EXPLAIN keyword: QuerySet.explain() queries
+        # lack the options SILKY_ANALYZE_QUERIES adds to silk's prefix (#650)
+        explain_keyword = connection.ops.explain_prefix or prefix
+        if q.upper().startswith((prefix.upper(), explain_keyword.upper())):
             # to avoid "EXPLAIN EXPLAIN", do not add prefix
             prefixed_query = q
         else:

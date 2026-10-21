@@ -2,13 +2,16 @@
 Test profiling of DB queries without mocking, to catch possible
 incompatibility
 """
+from django.db.models.sql.compiler import SQLCompiler
 from django.shortcuts import reverse
 from django.test import Client, TestCase
+from example_app.models import Blind
 
 from silk.collector import DataCollector
 from silk.config import SilkyConfig
 from silk.models import Request
 from silk.profiling.profiler import silk_profile
+from silk.sql import execute_sql
 
 from .factories import BlindFactory
 
@@ -59,6 +62,15 @@ class TestAnalyzeQueries(TestCase):
 
         DataCollector().profiles.values()
         assert len(resp.context['blinds']) == 5
+
+    def test_queryset_explain(self):
+        """QuerySet.explain() already starts with EXPLAIN, so silk must not prefix it again (#650)"""
+        # Wrap queries the same way SilkyMiddleware.process_request does
+        if not hasattr(SQLCompiler, '_execute_sql'):
+            SQLCompiler._execute_sql = SQLCompiler.execute_sql
+            SQLCompiler.execute_sql = execute_sql
+        DataCollector().configure(Request(path='/path/to/somewhere'), should_profile=False)
+        self.assertTrue(Blind.objects.all().explain())
 
 
 class TestAnalyzeQueriesExplainParams(TestAnalyzeQueries):
