@@ -1,5 +1,6 @@
 import logging
 import random
+import threading
 from collections.abc import Iterable
 
 from django.conf import settings
@@ -106,6 +107,9 @@ class TestMiddleware:
 
 
 class SilkyMiddleware:
+    _dynamic_mappings_applied = False
+    _dynamic_mappings_lock = threading.Lock()
+
     def __init__(self, get_response):
         if config.SILKY_AUTHENTICATION and not (
             set(AUTH_AND_SESSION_MIDDLEWARES) & set(settings.MIDDLEWARE)
@@ -164,7 +168,13 @@ class SilkyMiddleware:
 
         Logger.debug('process_request')
         request.silk_is_intercepted = True
-        self._apply_dynamic_mappings()
+        # Dynamic mappings replace the target functions in place, so apply them only
+        # once (#633). The lock stops two concurrent first requests both applying them
+        if not SilkyMiddleware._dynamic_mappings_applied:
+            with SilkyMiddleware._dynamic_mappings_lock:
+                if not SilkyMiddleware._dynamic_mappings_applied:
+                    self._apply_dynamic_mappings()
+                    SilkyMiddleware._dynamic_mappings_applied = True
         if not hasattr(SQLCompiler, '_execute_sql'):
             SQLCompiler._execute_sql = SQLCompiler.execute_sql
             SQLCompiler.execute_sql = execute_sql

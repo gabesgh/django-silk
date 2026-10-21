@@ -1,6 +1,7 @@
+import importlib
 from unittest.mock import patch
 
-from django.test import TestCase, override_settings
+from django.test import RequestFactory, TestCase, override_settings
 from django.urls import reverse, set_script_prefix
 
 from silk.config import SilkyConfig
@@ -8,6 +9,7 @@ from silk.errors import SilkNotConfigured
 from silk.middleware import SilkyMiddleware, _should_intercept
 from silk.models import Request
 
+from .data import dynamic
 from .util import mock_data_collector
 
 
@@ -115,6 +117,46 @@ class TestApplyDynamicMappings(TestCase):
                 "SILKY_AUTHENTICATION can not be enabled without Session, Authentication or Message Django's middlewares"
             ):
                 SilkyMiddleware(fake_get_response)
+
+
+class TestDynamicMappingsAppliedOnce(TestCase):
+    """Dynamic mappings must be applied once, not on every request (#633)"""
+
+    def setUp(self):
+        # Start from the undecorated functions and put them back afterwards
+        importlib.reload(dynamic)
+        self.addCleanup(importlib.reload, dynamic)
+        self.original_foo = dynamic.foo
+        SilkyMiddleware._dynamic_mappings_applied = False
+        self.addCleanup(setattr, SilkyMiddleware, '_dynamic_mappings_applied', False)
+        self.addCleanup(setattr, SilkyConfig(), 'SILKY_DYNAMIC_PROFILING', [])
+
+    def _send_requests(self, count):
+        middleware = SilkyMiddleware(fake_get_response)
+        for _ in range(count):
+            middleware.process_request(RequestFactory().get('/foo/'))
+
+    def test_decorator_wraps_function_once(self):
+        SilkyConfig().SILKY_DYNAMIC_PROFILING = [
+            {
+                'module': 'tests.data.dynamic',
+                'function': 'foo'
+            }
+        ]
+        self._send_requests(3)
+        self.assertIs(dynamic.foo.__wrapped__, self.original_foo)
+
+    def test_context_manager_injected_once(self):
+        SilkyConfig().SILKY_DYNAMIC_PROFILING = [
+            {
+                'module': 'tests.data.dynamic',
+                'function': 'foo',
+                'start_line': 1,
+                'end_line': 2,
+            }
+        ]
+        self._send_requests(2)  # The second request used to raise OSError
+        self.assertIsNot(dynamic.foo, self.original_foo)
 
 
 class TestShouldIntercept(TestCase):
